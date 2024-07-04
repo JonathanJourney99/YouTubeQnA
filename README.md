@@ -1,6 +1,3 @@
-Certainly! Here's a small introductory section for your app's `README.md`:
-
----
 
 # YouTube Video and Playlist Transcription App
 
