@@ -3,31 +3,16 @@ import requests as rq
 from bs4 import BeautifulSoup
 import json
 from langchain.vectorstores import FAISS
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import xml.etree.ElementTree as ET
 from stqdm import stqdm
-# from google.generativeai import GenerativeModel
 from langchain.embeddings import OpenAIEmbeddings
-# from openai import OpenAI
-from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from dotenv import find_dotenv, load_dotenv
+
 load_dotenv(find_dotenv(), override=True)
 
-prompt = '''
-You are a highly intelligent and articulate Chat Bot with deep understanding of various subjects. 
-Your task is to analyze the given YouTube transcript and answer questions based on it.
-
-Instructions:
-1. You will be provided with the transcript text of a YouTube video and its video ID.
-2. A user will ask questions related to the content of the transcript.
-3. Your answers must be based on the information provided in the transcript. Do not include any information not found in the transcript.
-4. Present your answers in bullet points for clarity.
-5. Ensure that your response is concise, accurate, and within 250 words.
-
-Here is the transcript text and video ID and user_question:
-'''
 
 def get_vectorstore(chunks):
     ''' 
@@ -48,10 +33,13 @@ def get_text_chunks(text):
     Uses CharacterTextSplitter to divide the text based on the specified separator, chunk size, and overlap.
     Takes a string as input and returns a list of text chunks.
  '''
-    text_splitter = CharacterTextSplitter(
-        separator="\n", chunk_size=100, chunk_overlap=10, length_function=len
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, chunk_overlap=10, length_function=len
     )
     chunks = text_splitter.split_text(text)
+    print(f"Number of chunks: {len(chunks)}")
+    for i, chunk in enumerate(chunks):
+        print(f"Chunk {i+1} size: {len(chunk)} characters")
     return chunks
 
 
@@ -91,22 +79,57 @@ def process_video(video_id, transcript_file):
     except Exception as ex:
         stqdm.write(str(ex))
     
-def get_conversation_chain(vectorstore):
-    '''
-    to create a conversational retrieval chain using a vector store.
-    Initializes a ChatOpenAI model for generating responses.
-    Uses ConversationBufferMemory to maintain the chat history.
-    Constructs a ConversationalRetrievalChain that retrieves relevant information from the vector store.
-    Takes a FAISS vector store as input and returns a conversational chain object.
-    '''
-    llm = ChatOpenAI()
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm, retriever=vectorstore.as_retriever(), memory=memory
-    )
-    return conversation_chain
+def ask_and_get_answer(vector_store, user_question, k=3):
+    prompt = '''
+    You are a highly intelligent and articulate Chat Bot with deep understanding of various subjects. 
+    Your task is to analyze the given YouTube transcript and answer questions based on it.
 
-def handle_userinput(user_question):
+    Instructions:
+    1. You will be provided with the transcript text of a YouTube video and its video ID.
+    2. A user will ask questions related to the content of the transcript.
+    3. Your answers must be based on the information provided in the transcript. Do not include any information not found in the transcript.
+    4. Present your answers in bullet points for clarity.
+    5. Ensure that your response is concise, accurate.
+    {context}
+
+    Here is the transcript text and video ID and user_question: {question}
+    '''
+    from langchain.chains import RetrievalQA
+    from langchain.prompts import PromptTemplate
+    from langchain_openai import ChatOpenAI
+
+    prompt_template = PromptTemplate(
+    template=prompt, input_variables=["context", "question"],
+    )
+    chain_type_kwargs = {"prompt": prompt_template}
+
+    llm = ChatOpenAI(model='gpt-3.5-turbo', temperature=1)
+    
+    retriever = vector_store.as_retriever(search_type='similarity', search_kwargs={'k': k})
+
+    chain = RetrievalQA.from_chain_type(llm=llm,
+    chain_type="stuff",
+    retriever=retriever,
+    chain_type_kwargs=chain_type_kwargs)
+    
+    answer = chain(user_question)
+    return answer
+# def get_conversation_chain(vectorstore):
+#     '''
+#     to create a conversational retrieval chain using a vector store.
+#     Initializes a ChatOpenAI model for generating responses.
+#     Uses ConversationBufferMemory to maintain the chat history.
+#     Constructs a ConversationalRetrievalChain that retrieves relevant information from the vector store.
+#     Takes a FAISS vector store as input and returns a conversational chain object.
+#     '''
+#     llm = ChatOpenAI()
+#     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+#     conversation_chain = ConversationalRetrievalChain.from_llm(
+#         llm=llm, retriever=vectorstore.as_retriever(), memory=memory
+#     )
+#     return conversation_chain
+
+def handle_userinput(vector_store, user_question, k=3):
     '''
     to handle user input and manage the conversation flow.
     Checks if a conversation chain exists; if not, creates one using the vector store.
@@ -116,10 +139,12 @@ def handle_userinput(user_question):
     Takes a user question as input.
     ''' 
     
-    if st.session_state.conversation is None and st.session_state.vectorstore is not None:
-        st.session_state.conversation = get_conversation_chain(st.session_state.vectorstore)
-    
-    response = st.session_state.conversation({"question": user_question})
+    # if st.session_state.ask_and_get_answer is None and st.session_state.ask_and_get_answer is not None:
+    #     st.session_state.ask_and_get_answer = ask_and_get_answer(st.session_state.vectorstore)
+    if user_question:
+        response = ask_and_get_answer(vector_store ,user_question)
+    else:
+        st.warning('Enter a Question')
 
     return response
 
@@ -131,11 +156,11 @@ def main():
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
 
-    if 'conversation' not in st.session_state:
-        st.session_state.conversation = None
+    # if 'ask_and_get_answer' not in st.session_state:
+    #     st.session_state.ask_and_get_answer = None
     
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    # if "chat_history" not in st.session_state:
+    #     st.session_state.chat_history = []
 
     st.set_page_config(
         page_title='YT playlist or video url',
@@ -175,25 +200,17 @@ def main():
         transcript_text = st.session_state.transcript_content.replace('[INAUDIBLE]', ' ').replace('\n',' ')
         if transcript_text:
             st.session_state.vectorstore = get_vectorstore(get_text_chunks(transcript_text))
-            st.session_state.conversation = get_conversation_chain(st.session_state.vectorstore)
+            # st.session_state.ask_and_get_answer = ask_and_get_answer(st.session_state.vectorstore)
         st.title("YouTube Transcript Query")
         st.subheader('Ask Question Related to the Video or Playlist')
         user_question = st.text_input('Chatting Area')
         if user_question:
-            response_text = handle_userinput(user_question=user_question)
-            print(response_text['chat_history'])
-            for i, response in enumerate(response_text['chat_history']):
-                if i == 0: # question
-                    container.write("User Question")
-                    container.write(response.content)
-                else:
-                    container.write("AI Answer")
-                    container.write(response.content)
+            response_text = handle_userinput(vector_store=st.session_state.vectorstore, user_question=user_question)
+            # st.write(response_text)
+            container.write('AI Answer: ')
+            container.write(response_text['result'])
         else:
-            container.warning('Provide a question')
-
-        # else:
-        #     container.write("Please provide a valid transcript and user question.")
+            container.write("Please provide a valid transcript and user question.")
 
 
 if __name__ == '__main__':
