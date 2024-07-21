@@ -50,5 +50,3 @@ To get started with using the application:
 
 
 ---
-
-Feel free to adjust the sections and details as per your specific application features and requirements!
