@@ -37,7 +37,7 @@ To get started with using the application:
 
 3. Launch the application:
    ```
-   python app.py
+   streamlit run  app.py
    ```
 
 4. Follow the prompts to input YouTube URLs, transcribe content, and query the transcripts interactively.
