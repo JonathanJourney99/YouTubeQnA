@@ -2,6 +2,7 @@ import streamlit as st
 import requests as rq
 from bs4 import BeautifulSoup
 import json
+import re
 from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import xml.etree.ElementTree as ET
@@ -10,6 +11,7 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from dotenv import find_dotenv, load_dotenv
+from transcripts import YouTube
 
 load_dotenv(find_dotenv(), override=True)
 
@@ -24,7 +26,9 @@ def get_vectorstore(chunks):
     # print(f'Chunks: {chunks}')
     embeddings = OpenAIEmbeddings(model='text-embedding-3-small', dimensions=1536)
     vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
-    print(vectorstore)
+    # to save as local file
+    vectorstore.save_local('fiass_index')
+    # print(vectorstore)
     return vectorstore
 
 def get_text_chunks(text):
@@ -63,17 +67,19 @@ def get_video_ids(video_list_id):
         print("ytInitialData not found in the HTML of the webpage.")
         return []
 
-def get_transcript(video_id):
-    URL_TRANSCRIPT_FORMAT = 'https://youtubetranscript.com/?server_vid2={}'
-    transcript_url = URL_TRANSCRIPT_FORMAT.format(video_id)
-    response = rq.get(transcript_url)
-    xml_data = response.text
-    root = ET.fromstring(xml_data)
-    return ' '.join([text.text for text in root.findall('.//text')])
+# def get_transcript(video_id):
+#     URL_TRANSCRIPT_FORMAT = 'https://youtubetranscript.com/?server_vid2={}'
+#     transcript_url = URL_TRANSCRIPT_FORMAT.format(video_id)
+#     response = rq.get(transcript_url)
+#     xml_data = response.text
+#     root = ET.fromstring(xml_data)
+#     return ' '.join([text.text for text in root.findall('.//text')])
 
 def process_video(video_id, transcript_file):
     try:
-        video_transcript = get_transcript(video_id)
+        ytService = YouTube()
+        raw_transcript_in_xml = ytService.get_transcript(video_id)
+        video_transcript = ytService.parse_transcript_xml(raw_transcript_in_xml)
         transcript_file.write(f"video_id: {video_id}\n")
         transcript_file.write(f"transcript: {video_transcript}\n\n")
     except Exception as ex:
@@ -85,11 +91,10 @@ def ask_and_get_answer(vector_store, user_question, k=3):
     Your task is to analyze the given YouTube transcript and answer questions based on it.
 
     Instructions:
-    1. You will be provided with the transcript text of a YouTube video and its video ID.
-    2. A user will ask questions related to the content of the transcript.
-    3. Your answers must be based on the information provided in the transcript. Do not include any information not found in the transcript.
-    4. Present your answers in bullet points for clarity.
-    5. Ensure that your response is concise, accurate.
+    Give a  concise and accurate answer to the question based on the transcript.
+    Make sure it satisfies the user's curiosity.
+    If the answer cannot be found in the transcript,
+    return "I'm sorry, but the transcript doesn't provide information about that."
     {context}
 
     Here is the transcript text and video ID and user_question: {question}
@@ -114,20 +119,7 @@ def ask_and_get_answer(vector_store, user_question, k=3):
     
     answer = chain(user_question)
     return answer
-# def get_conversation_chain(vectorstore):
-#     '''
-#     to create a conversational retrieval chain using a vector store.
-#     Initializes a ChatOpenAI model for generating responses.
-#     Uses ConversationBufferMemory to maintain the chat history.
-#     Constructs a ConversationalRetrievalChain that retrieves relevant information from the vector store.
-#     Takes a FAISS vector store as input and returns a conversational chain object.
-#     '''
-#     llm = ChatOpenAI()
-#     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-#     conversation_chain = ConversationalRetrievalChain.from_llm(
-#         llm=llm, retriever=vectorstore.as_retriever(), memory=memory
-#     )
-#     return conversation_chain
+
 
 def handle_userinput(vector_store, user_question, k=3):
     '''
@@ -177,7 +169,8 @@ def main():
             with st.spinner('Loading Transcripts......'):
                 if enter_url:
                     if choice == 'YT_video':
-                        video_id = enter_url.split('watch?v=')[1]
+                        ytService = YouTube()
+                        video_id = ytService.get_video_id(enter_url)
                         transcript_filename = f"{video_id}.txt"
                         with open(transcript_filename, "w") as transcript_file:
                             process_video(video_id, transcript_file)                     
